@@ -1,0 +1,108 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 GET MADE
+# Second brain: Basic Memory as a shared MCP knowledge server
+# Deploy with any Docker Compose host (Coolify, Portainer, plain docker compose).
+# Put your domain / reverse proxy in front of the "gateway" service, port 8080.
+# Never expose the "basic-memory" service directly: it has no authentication.
+
+services:
+  # The MCP server itself. Reachable only inside the Compose network.
+  basic-memory:
+    image: ghcr.io/basicmachines-co/basic-memory:${BASIC_MEMORY_VERSION:-0.23.2}
+    # Before start: exclude rejected agent writes (inbox/_rejected) from the
+    # index so agents do not find them as knowledge.
+    command:
+      - sh
+      - -c
+      - >
+        grep -qsx _rejected /app/.basic-memory/.bmignore ||
+        printf '%s\n' '.*' '*.db' '*.db-shm' '*.db-wal' config.json node_modules _rejected
+        >> /app/.basic-memory/.bmignore;
+        exec basic-memory mcp --transport streamable-http --host 0.0.0.0 --port 8000 --path /mcp
+    environment:
+      # The vault is the project "main" and lives directly in the volume.
+      BASIC_MEMORY_HOME: /app/data
+      BASIC_MEMORY_PROJECT_ROOT: /app/data
+      BASIC_MEMORY_DEFAULT_PROJECT: main
+      # Index (SQLite) and embedding model live apart from the vault.
+      BASIC_MEMORY_CONFIG_DIR: /app/.basic-memory
+      # Re-index automatically when files change (Git sync, Obsidian).
+      BASIC_MEMORY_SYNC_CHANGES: "true"
+      BASIC_MEMORY_SYNC_DELAY: "1000"
+      # Semantic search with a local model: notes never leave the server.
+      BASIC_MEMORY_SEMANTIC_SEARCH_ENABLED: "true"
+      BASIC_MEMORY_SEMANTIC_EMBEDDING_PROVIDER: fastembed
+      BASIC_MEMORY_SEMANTIC_EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
+      BASIC_MEMORY_SEMANTIC_EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-384}
+      BASIC_MEMORY_LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      BASIC_MEMORY_NO_PROMOS: "1"
+    volumes:
+      - vault:/app/data
+      - bm-state:/app/.basic-memory
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; socket.create_connection(('127.0.0.1', 8000), 3).close()"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+
+  # Token check in front of the MCP server. Every client gets its own token,
+  # so one client can be locked out without touching the others.
+  gateway:
+    build: ./gateway
+    environment:
+      # All slots are optional. Leave a slot empty until you connect that
+      # client. Empty slots never grant access.
+      MCP_TOKEN_CLAUDE: ${MCP_TOKEN_CLAUDE:-}
+      MCP_TOKEN_CHATGPT: ${MCP_TOKEN_CHATGPT:-}
+      MCP_TOKEN_GEMINI: ${MCP_TOKEN_GEMINI:-}
+      MCP_TOKEN_PERPLEXITY: ${MCP_TOKEN_PERPLEXITY:-}
+      MCP_TOKEN_ABACUS: ${MCP_TOKEN_ABACUS:-}
+      MCP_TOKEN_GENSPARK: ${MCP_TOKEN_GENSPARK:-}
+      MCP_TOKEN_HERMES: ${MCP_TOKEN_HERMES:-}
+      MCP_TOKEN_OPENCLAW: ${MCP_TOKEN_OPENCLAW:-}
+      MCP_TOKEN_EXTRA_1: ${MCP_TOKEN_EXTRA_1:-}
+      MCP_TOKEN_EXTRA_2: ${MCP_TOKEN_EXTRA_2:-}
+    expose:
+      - "8080"
+    depends_on:
+      basic-memory:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # Keeps the vault in sync with a private Git repository (for Obsidian),
+  # protects read-only folders and keeps hidden folders off the server.
+  vault-sync:
+    build: ./vault-sync
+    environment:
+      GIT_REMOTE: ${VAULT_GIT_REMOTE:-}
+      GIT_TOKEN: ${VAULT_GIT_TOKEN:-}
+      GIT_BRANCH: ${VAULT_GIT_BRANCH:-main}
+      SYNC_INTERVAL: ${VAULT_SYNC_INTERVAL:-120}
+      # Readable for agents, but only changeable from Obsidian.
+      PROTECTED_PATHS: ${VAULT_PROTECTED_PATHS:-knowledge about-me}
+      # Only in Git and Obsidian, never on the server.
+      HIDDEN_PATHS: ${VAULT_HIDDEN_PATHS:-private}
+    volumes:
+      - vault:/vault
+    depends_on:
+      basic-memory:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  vault:
+  bm-state:

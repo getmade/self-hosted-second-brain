@@ -1,0 +1,107 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 GET MADE
+{
+	admin off
+	auto_https off
+}
+
+(proxy) {
+	reverse_proxy basic-memory:8000 {
+		# MCP streams responses, so do not buffer.
+		flush_interval -1
+	}
+}
+
+:8080 {
+	# Health check, reachable without a token, reveals nothing.
+	@health path /healthz
+	handle @health {
+		respond "ok" 200
+	}
+
+	# Access only with one of the configured tokens. Unused slots stay
+	# empty; the length check makes sure an empty token never matches.
+	#
+	# Clients send API keys in different ways. Accepted are:
+	#   Authorization: Bearer <token>
+	#   Authorization: <token>
+	#   X-API-Key: <token>
+
+	@bearer {
+		header Authorization "Bearer {env.MCP_TOKEN_CLAUDE}"
+		header Authorization "Bearer {env.MCP_TOKEN_CHATGPT}"
+		header Authorization "Bearer {env.MCP_TOKEN_GEMINI}"
+		header Authorization "Bearer {env.MCP_TOKEN_PERPLEXITY}"
+		header Authorization "Bearer {env.MCP_TOKEN_ABACUS}"
+		header Authorization "Bearer {env.MCP_TOKEN_GENSPARK}"
+		header Authorization "Bearer {env.MCP_TOKEN_HERMES}"
+		header Authorization "Bearer {env.MCP_TOKEN_OPENCLAW}"
+		header Authorization "Bearer {env.MCP_TOKEN_EXTRA_1}"
+		header Authorization "Bearer {env.MCP_TOKEN_EXTRA_2}"
+		header_regexp Authorization "^Bearer [^ ]{32,}$"
+	}
+	handle @bearer {
+		import proxy
+	}
+
+	@raw {
+		header Authorization "{env.MCP_TOKEN_CLAUDE}"
+		header Authorization "{env.MCP_TOKEN_CHATGPT}"
+		header Authorization "{env.MCP_TOKEN_GEMINI}"
+		header Authorization "{env.MCP_TOKEN_PERPLEXITY}"
+		header Authorization "{env.MCP_TOKEN_ABACUS}"
+		header Authorization "{env.MCP_TOKEN_GENSPARK}"
+		header Authorization "{env.MCP_TOKEN_HERMES}"
+		header Authorization "{env.MCP_TOKEN_OPENCLAW}"
+		header Authorization "{env.MCP_TOKEN_EXTRA_1}"
+		header Authorization "{env.MCP_TOKEN_EXTRA_2}"
+		header_regexp Authorization "^[^ ]{32,}$"
+	}
+	handle @raw {
+		import proxy
+	}
+
+	@apikey {
+		header X-API-Key "{env.MCP_TOKEN_CLAUDE}"
+		header X-API-Key "{env.MCP_TOKEN_CHATGPT}"
+		header X-API-Key "{env.MCP_TOKEN_GEMINI}"
+		header X-API-Key "{env.MCP_TOKEN_PERPLEXITY}"
+		header X-API-Key "{env.MCP_TOKEN_ABACUS}"
+		header X-API-Key "{env.MCP_TOKEN_GENSPARK}"
+		header X-API-Key "{env.MCP_TOKEN_HERMES}"
+		header X-API-Key "{env.MCP_TOKEN_OPENCLAW}"
+		header X-API-Key "{env.MCP_TOKEN_EXTRA_1}"
+		header X-API-Key "{env.MCP_TOKEN_EXTRA_2}"
+		header_regexp X-API-Key "^[^ ]{32,}$"
+	}
+	handle @apikey {
+		import proxy
+	}
+
+	# ChatGPT and the Gemini app cannot send static tokens, only OAuth or
+	# nothing. Their token is therefore part of the path:
+	#   /mcp/<MCP_TOKEN_CHATGPT>   /mcp/<MCP_TOKEN_GEMINI>
+	# {$...} is substituted at startup. The length check makes sure an empty
+	# slot never unlocks "/mcp/". Path matching is case-insensitive, so use
+	# hex tokens here (openssl rand -hex 32).
+	@path_token {
+		path /mcp/{$MCP_TOKEN_CHATGPT} /mcp/{$MCP_TOKEN_GEMINI}
+		path_regexp ^/mcp/[^/]{32,}$
+	}
+	handle @path_token {
+		rewrite * /mcp
+		import proxy
+	}
+
+	# No OAuth here: answer OAuth discovery requests with 404 so clients
+	# continue without sign-in.
+	@oauth_discovery path /.well-known/*
+	handle @oauth_discovery {
+		respond 404
+	}
+
+	handle {
+		header WWW-Authenticate "Bearer"
+		respond "Unauthorized" 401
+	}
+}

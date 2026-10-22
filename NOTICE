@@ -1,0 +1,17 @@
+Self-hosted Second Brain
+Copyright (C) 2026 GET MADE
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, version 3. See LICENSE.
+
+Commercial licenses without the AGPL obligations are available from GET MADE:
+https://getmade.eu
+
+This project contains configuration for, but does not include, the following
+third-party software, which is pulled from its official sources at build or run
+time and is licensed separately:
+
+- Basic Memory (https://github.com/basicmachines-co/basic-memory), AGPL-3.0
+- Caddy (https://caddyserver.com), Apache-2.0
+- alpine/git (https://github.com/alpine-docker/git)
